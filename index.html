@@ -161,14 +161,14 @@ html[data-mode="dark"] .star.on{color:#f7c33b}
 /* settings modal: wide two-column */
 .modal.wide{max-width:880px;max-height:92vh;overflow:auto;padding:26px 28px}
 .modal.wide h3{font-size:19px}
-.setcols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:30px;margin-top:14px}
+.setcols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px;margin-top:10px}
 .setcol{min-width:0}
-.setsec{margin-bottom:24px}
+.setsec{margin-bottom:18px}
 .setsec:last-child{margin-bottom:0}
 .setlab{font-size:12px;font-weight:700;color:var(--sub);margin:0 0 8px;letter-spacing:.05em}
 .setrow{display:flex;gap:6px;flex-wrap:wrap}
 .palgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.setfoot{display:flex;gap:10px;margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
+.setfoot{display:flex;gap:10px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
 @media (max-width:940px){.modal.wide{max-width:600px}.setcols{grid-template-columns:minmax(0,1fr);gap:0}}
 .modal .err{color:#b03a2e;font-size:12.5px;min-height:18px}
 .tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--line);padding-bottom:10px}
@@ -9257,8 +9257,6 @@ function settingsModal(open){
               <div class="hint" style="font-size:11px;margin-top:8px">This colour is applied to the whole interface: background, cards, borders, buttons, links and highlights. Text stays black in light mode and white in dark mode.</div>
             </div>
           </div>
-        </div>
-        <div class="setcol">
           <div class="setsec">
             <div class="setlab" style="display:flex;align-items:center;justify-content:space-between">
               <span>FEEDBACK</span>
@@ -9283,6 +9281,8 @@ function settingsModal(open){
               <div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="auth">Sign in</button></div>
             `}
           </div>
+        </div>
+        <div class="setcol">
           <div class="setsec">
             <div class="setlab">CLOUD ACCOUNT</div>
             ${SUPSESS ? `
