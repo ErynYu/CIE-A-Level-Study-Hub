@@ -1323,6 +1323,69 @@ function cloudQueue(){
   clearTimeout(__cloudTimer);
   __cloudTimer = setTimeout(() => { cloudPush().catch(() => {}); }, 1500);
 }
+function cloudFields(){
+  return {
+    email: (($('cloudEmail') && $('cloudEmail').value) || '').trim().toLowerCase(),
+    name: (($('cloudUser') && $('cloudUser').value) || '').trim(),
+    pass: ($('cloudPass') && $('cloudPass').value) || ''
+  };
+}
+function cloudAdopt(r, email, fallbackName){
+  SUPSESS = {
+    at: r.access_token, rt: r.refresh_token,
+    exp: Date.now() + ((r.expires_in || 3600) * 1000),
+    uid: r.user && r.user.id,
+    email: email,
+    name: (r.user && r.user.user_metadata && r.user.user_metadata.username) || fallbackName || email
+  };
+  ss(K_SUPA, SUPSESS);
+}
+async function cloudAfterAuth(){
+  const had = await cloudPull().catch(() => false);
+  if(!had) await cloudPush(true);
+}
+async function cloudSignup(){
+  const f = cloudFields();
+  window.__cloudEmail = f.email; window.__cloudName = f.name;
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(f.email)){ cloudMsg('Enter a valid email address.'); return; }
+  if(f.pass.length < 6){ cloudMsg('Password must be at least 6 characters.'); return; }
+  cloudMsg('Creating account…');
+  try {
+    const r = await supaCall('/auth/v1/signup', {
+      method:'POST',
+      body:{ email: f.email, password: f.pass, data:{ username: f.name || f.email.split('@')[0] } }
+    });
+    if(r && r.access_token){
+      cloudAdopt(r, f.email, f.name);
+      await cloudAfterAuth();
+      settingsModal(true);
+      toast('Account created — signed in.');
+    } else {
+      cloudMsg('Account created. Check your email to confirm it, then sign in here.');
+    }
+  } catch(e){
+    const m = e.message || '';
+    cloudMsg(/registered|already/i.test(m) ? 'That email already has an account — press Sign in.' : ('Create failed: ' + m));
+  }
+}
+async function cloudSignin(){
+  const f = cloudFields();
+  window.__cloudEmail = f.email; window.__cloudName = f.name;
+  if(!f.email || !f.pass){ cloudMsg('Enter email and password.'); return; }
+  cloudMsg('Signing in…');
+  try {
+    const r = await supaCall('/auth/v1/token?grant_type=password', {
+      method:'POST', body:{ email: f.email, password: f.pass }
+    });
+    cloudAdopt(r, f.email, f.name);
+    await cloudAfterAuth();
+    settingsModal(true);
+    toast('Signed in to the cloud.');
+  } catch(e){
+    const m = e.message || '';
+    cloudMsg(/invalid/i.test(m) ? 'Wrong email or password.' : ('Sign in failed: ' + m));
+  }
+}
 async function cloudSendCode(){
   const email = (($('cloudEmail') && $('cloudEmail').value) || '').trim().toLowerCase();
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(email)){ cloudMsg('Enter a valid email address.'); return; }
@@ -9223,21 +9286,21 @@ function settingsModal(open){
           <div class="setsec">
             <div class="setlab">CLOUD ACCOUNT</div>
             ${SUPSESS ? `
-              <div class="hint" style="margin-bottom:8px">Connected · ${esc(SUPSESS.email || '')}</div>
+              <div class="hint" style="margin-bottom:8px">Connected · ${esc(SUPSESS.name || SUPSESS.email || '')}</div>
               <div class="row" style="flex-wrap:wrap;margin-top:0">
                 <button class="btn ghost sm" data-act="cloudSync">Sync now</button>
-                <button class="btn ghost sm" data-act="cloudOut">Disconnect</button>
+                <button class="btn ghost sm" data-act="cloudOut">Sign out</button>
               </div>
             ` : `
-              <div class="hint" style="margin-bottom:10px">Sign in with a one-time email code. Your papers then follow you across devices and domains.</div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <input class="inp" id="cloudEmail" placeholder="you@email.com" value="${esc(window.__cloudEmail || '')}" style="flex:1;min-width:150px;margin:0">
-                <button class="btn ghost sm" data-act="cloudSend">Send code</button>
+              <div class="hint" style="margin-bottom:10px">Register with an email and password. The same account works on every device and domain.</div>
+              <input class="inp" id="cloudEmail" placeholder="Email address" value="${esc(window.__cloudEmail || '')}" style="margin:0 0 8px">
+              <input class="inp" id="cloudUser" placeholder="Username (shown to others)" value="${esc(window.__cloudName || '')}" style="margin:0 0 8px">
+              <input class="inp" id="cloudPass" type="password" placeholder="Password (min 6 characters)" style="margin:0 0 10px" autocomplete="current-password">
+              <div class="row" style="flex-wrap:wrap;margin-top:0">
+                <button class="btn primary sm" data-act="cloudSignup">Create account</button>
+                <button class="btn ghost sm" data-act="cloudSignin">Sign in</button>
               </div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-                <input class="inp" id="cloudCode" placeholder="6-digit code" style="width:132px;margin:0">
-                <button class="btn primary sm" data-act="cloudVerify">Verify</button>
-              </div>
+              <div class="hint" style="margin-top:8px">Already registered? Fill the same email and password, then press Sign in.</div>
             `}
             <div class="hint" id="cloudMsg" style="margin-top:6px"></div>
           </div>
@@ -10225,8 +10288,8 @@ document.addEventListener('click', (e)=>{
   if(act === 'pdfAnswers'){ exportPDF(true); return; }
   if(act === 'settings'){ settingsModal(true); return; }
   if(act === 'setClose'){ settingsModal(false); return; }
-  if(act === 'cloudSend'){ cloudSendCode(); return; }
-  if(act === 'cloudVerify'){ cloudVerify(); return; }
+  if(act === 'cloudSignup'){ cloudSignup(); return; }
+  if(act === 'cloudSignin'){ cloudSignin(); return; }
   if(act === 'cloudSync'){ cloudSyncNow(); return; }
   if(act === 'cloudOut'){ cloudOut(); return; }
   if(act === 'bkExport'){ bkDownload(); return; }
