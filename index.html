@@ -389,7 +389,7 @@ html[data-mode="dark"] .pin.on{color:#fff}
   <button class="tbtn" id="papersBtn" data-act="papers">My papers <span id="paperCount"></span></button>
   <button class="tbtn" data-act="settings" id="settingsBtn">⚙ Settings</button>
   <button class="tbtn" data-act="auth" id="authBtn">Sign in</button>
-  <div class="userchip hidden" id="userChip"><div class="avatar" id="avatar">G</div><span id="userName">Guest</span><span class="roleTag" id="roleTag"></span></div>
+  <div class="userchip hidden" id="userChip" data-act="account" style="cursor:pointer" title="Account settings"><div class="avatar" id="avatar">G</div><span id="userName">Guest</span><span class="roleTag" id="roleTag"></span></div>
 </header>
 <main class="wrap">
   <section id="vHub"></section>
@@ -1372,6 +1372,92 @@ function cloudAdopt(r, email, fallbackName){
 async function cloudAfterAuth(){
   const had = await cloudPull().catch(() => false);
   if(!had) await cloudPush(true);
+  await profileUpsert().catch(() => {});
+}
+window.SUPSESS_LIVE = function(){ return SUPSESS; };
+
+async function profileUpsert(){
+  const t = await cloudToken();
+  if(!t || !SUPSESS) return;
+  await supaCall('/rest/v1/profiles', {
+    method:'POST', token:t,
+    headers:{ Prefer:'resolution=merge-duplicates,return=minimal' },
+    body:{ id: SUPSESS.uid, email: SUPSESS.email, username: SUPSESS.name,
+      role: SUPSESS.role || 'student', updated_at: new Date().toISOString() }
+  });
+}
+function accountModal(open){
+  let mask = $('accMask');
+  if(!open){ if(mask) mask.remove(); return; }
+  if(mask) mask.remove();
+  if(!SUPSESS){ toast('Connect a cloud account first.'); return; }
+  mask = document.createElement('div'); mask.className='mask'; mask.id='accMask';
+  mask.innerHTML = `
+    <div class="modal" style="max-width:520px">
+      <h3>Account</h3>
+      <div class="sub">Signed in as ${esc(SUPSESS.email || '')}${SUPSESS.role === 'owner' ? ' · primary administrator' : ''}</div>
+      <div class="setlab">NICKNAME</div>
+      <input class="inp" id="accName" value="${esc(SUPSESS.name || '')}" placeholder="Nickname shown to others">
+      <div class="setlab">NEW PASSWORD</div>
+      <input class="inp" id="accPass" type="password" placeholder="Leave blank to keep the current one" autocomplete="new-password">
+      <div class="setlab">NEW EMAIL</div>
+      <input class="inp" id="accEmail" placeholder="Leave blank to keep the current one">
+      <div class="hint" style="margin-top:-2px">Changing the email sends a confirmation link to the new address.</div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn primary" style="flex:1" data-act="accSave">Save changes</button>
+        <button class="btn ghost" data-act="accClose">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+}
+async function accountSave(){
+  if(!SUPSESS){ toast('Connect a cloud account first.'); return; }
+  const name = (($('accName') && $('accName').value) || '').trim();
+  const pass = (($('accPass') && $('accPass').value) || '').trim();
+  const email = (($('accEmail') && $('accEmail').value) || '').trim().toLowerCase();
+  if(pass && pass.length < 6){ toast('Password must be at least 6 characters.'); return; }
+  if(email && !/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(email)){ toast('Enter a valid email address.'); return; }
+  const body = { data:{ username: name || SUPSESS.name, role: SUPSESS.role || 'student' } };
+  if(pass) body.password = pass;
+  if(email) body.email = email;
+  try {
+    await supaCall('/auth/v1/user', { method:'PUT', token: await cloudToken(), body: body });
+    if(name) SUPSESS.name = name;
+    if(email) SUPSESS.email = email;
+    ss(K_SUPA, SUPSESS);
+    await profileUpsert().catch(()=>{});
+    accountModal(false); settingsModal(true); renderUserChip();
+    toast(email ? 'Saved — confirm the link sent to the new email.' : 'Account updated.');
+  } catch(e){ toast('Save failed: ' + e.message); }
+}
+async function membersModal(open){
+  let mask = $('memMask');
+  if(!open){ if(mask) mask.remove(); return; }
+  if(mask) mask.remove();
+  const t = await cloudToken();
+  let rows = [];
+  try {
+    rows = await supaCall('/rest/v1/profiles?select=email,username,role,created_at&order=created_at.asc', { token:t }) || [];
+  } catch(e){ toast('Load failed: ' + e.message); return; }
+  mask = document.createElement('div'); mask.className='mask'; mask.id='memMask';
+  const roleName = r => r === 'owner' ? 'Primary admin' : (r === 'deputy' ? 'Deputy admin' : 'Student');
+  mask.innerHTML = `
+    <div class="modal" style="max-width:660px">
+      <h3>All accounts</h3>
+      <div class="sub">${rows.length} registered · only the primary administrator can see this list</div>
+      <div style="max-height:54vh;overflow:auto">
+        ${rows.map(r => `
+          <div class="pitem" style="align-items:flex-start">
+            <div class="pt">
+              <div class="ptn">${esc(r.username || r.email || '—')}</div>
+              <div class="pmeta">${esc(r.email || '')} · ${roleName(r.role)}</div>
+            </div>
+            <div class="pmeta" style="white-space:nowrap">${r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}</div>
+          </div>`).join('') || '<div class="empty"><b>No accounts yet</b></div>'}
+      </div>
+      <div class="row" style="margin-top:14px"><button class="btn primary" style="flex:1" data-act="memClose">Close</button></div>
+    </div>`;
+  document.body.appendChild(mask);
 }
 async function cloudSignup(){
   const f = cloudFields();
@@ -1389,7 +1475,7 @@ async function cloudSignup(){
     if(r && r.access_token){
       cloudAdopt(r, f.email, f.name);
       await cloudAfterAuth();
-      settingsModal(true);
+      settingsModal(true); renderUserChip();
       toast('Account created — signed in.');
     } else {
       cloudMsg('Account created. Check your email to confirm it, then sign in here.');
@@ -1410,7 +1496,7 @@ async function cloudSignin(){
     });
     cloudAdopt(r, f.email, f.name);
     await cloudAfterAuth();
-    settingsModal(true);
+    settingsModal(true); renderUserChip();
     toast('Signed in to the cloud.');
   } catch(e){
     const m = e.message || '';
@@ -1458,7 +1544,7 @@ async function cloudSyncNow(){
 async function cloudOut(){
   try { await supaCall('/auth/v1/logout', { method:'POST', token: SUPSESS && SUPSESS.at }); } catch(e){}
   SUPSESS = null; ss(K_SUPA, null); window.__cloudEmail = '';
-  settingsModal(true); toast('Cloud account disconnected.');
+  settingsModal(true); renderUserChip(); toast('Cloud account disconnected.');
 }
 function supaHashSession(){
   if(!location.hash || location.hash.indexOf('access_token=') < 0) return;
@@ -8554,8 +8640,16 @@ function shuffle(a){ const x = a.slice(); for(let i=x.length-1;i>0;i--){ const j
 /* ---------- auth ---------- */
 function renderUserChip(){
   const signed = !!state.user;
-  $('userChip').classList.toggle('hidden', !signed);
-  $('authBtn').classList.toggle('hidden', signed);
+  const cloud = !!(window.SUPSESS_LIVE ? window.SUPSESS_LIVE() : null);
+  $('userChip').classList.toggle('hidden', !(signed || cloud));
+  $('authBtn').classList.toggle('hidden', !!(signed || cloud));
+  if(!signed && cloud){
+    const c = window.SUPSESS_LIVE();
+    $('userName').textContent = c.name || c.email || 'Account';
+    $('avatar').textContent = (c.name || c.email || 'U').slice(0,1).toUpperCase();
+    $('roleTag').textContent = c.role === 'owner' ? 'Primary admin' : 'Student';
+    $('roleTag').classList.remove('hidden');
+  }
   if(signed){
     $('userName').textContent = displayName();
     $('avatar').textContent = displayName().slice(0,1).toUpperCase();
@@ -9296,6 +9390,8 @@ function settingsModal(open){
               <div class="hint" style="margin-bottom:8px">Connected · ${esc(SUPSESS.name || SUPSESS.email || '')}${SUPSESS.role === 'owner' ? ' · primary administrator' : ''}</div>
               <div class="row" style="flex-wrap:wrap;margin-top:0">
                 <button class="btn ghost sm" data-act="cloudSync">Sync now</button>
+                <button class="btn ghost sm" data-act="account">Edit account</button>
+                ${SUPSESS.role === 'owner' ? '<button class="btn ghost sm" data-act="members">All accounts</button>' : ''}
                 <button class="btn ghost sm" data-act="cloudOut">Sign out</button>
               </div>
             ` : `
@@ -10322,6 +10418,11 @@ document.addEventListener('click', (e)=>{
   if(act === 'pdfAnswers'){ exportPDF(true); return; }
   if(act === 'settings'){ settingsModal(true); return; }
   if(act === 'setClose'){ settingsModal(false); return; }
+  if(act === 'account'){ accountModal(true); return; }
+  if(act === 'accClose'){ accountModal(false); return; }
+  if(act === 'accSave'){ accountSave(); return; }
+  if(act === 'members'){ membersModal(true); return; }
+  if(act === 'memClose'){ membersModal(false); return; }
   if(act === 'cloudSignup'){ cloudSignup(); return; }
   if(act === 'cloudSignin'){ cloudSignin(); return; }
   if(act === 'cloudSync'){ cloudSyncNow(); return; }
