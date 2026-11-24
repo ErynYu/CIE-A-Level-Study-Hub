@@ -1792,6 +1792,22 @@ function planChip(r){
   const live = d > new Date();
   return '<span class="chip ' + (live ? 'ok' : '') + '">' + (live ? 'Pro · ' : 'Expired · ') + d.toLocaleDateString() + '</span>';
 }
+async function patchPlan(uid, patch){
+  const t = await cloudToken();
+  if(!t) throw new Error('未登录');
+  const r = await supaCall('/rest/v1/profiles?id=eq.' + encodeURIComponent(uid), {
+    method:'PATCH', token:t, headers:{ Prefer:'return=representation' }, body: patch });
+  if(!Array.isArray(r) || !r.length) throw new Error('没有权限修改（RLS 拒绝）');
+  return r[0];
+}
+function planErrText(e){
+  const m = String((e && e.message) || e || '');
+  if(/Could not find the function|PGRST202/i.test(m)) return L('The database function is missing — run the latest SQL file in Supabase.','数据库里还没有这个函数，请先在 Supabase 跑最新的 SQL。','資料庫裡還沒有這個函數，請先在 Supabase 跑最新的 SQL。');
+  if(/permission denied|42501/i.test(m)) return L('No permission on the server — run the SQL grants again.','服务端没有权限，请重跑 SQL 里的 grant 部分。','伺服器沒有權限，請重跑 SQL 裡的 grant 部分。');
+  if(/JWT|token|expired/i.test(m)) return L('Your sign-in expired — sign in again.','登录已过期，请重新登录。','登入已過期，請重新登入。');
+  if(/网络|Failed to fetch|NetworkError/i.test(m)) return L('Network error — check the connection.','网络异常，请检查网络后重试。','網路異常，請檢查網路後重試。');
+  return m;
+}
 function planMsg(txt, bad){
   const el = document.getElementById('admMemMsg');
   if(el){ el.textContent = txt; el.style.color = bad ? '#c0392b' : 'var(--muted)'; }
@@ -1802,6 +1818,7 @@ async function planRevoke(uid){
   try{ t = await cloudToken(); }catch(e){}
   if(!t) return planMsg(L('Sign in first.','请先登录。','請先登入。'), true);
   try{ await roleCheck(true); }catch(e){}
+  let firstErr = null;
   try{
     const r = await supaCall('/rest/v1/rpc/admin_revoke_plan', { method:'POST', token:t, body:{ p_uid: uid } });
     const row = Array.isArray(r) ? r[0] : r;
@@ -1809,10 +1826,19 @@ async function planRevoke(uid){
       planMsg(L('Membership revoked.','已撤销该账号的会员。','已撤銷該帳號的會員。'), false);
       await memLoad();
       if(SUPSESS && SUPSESS.uid === uid) await memberLoad().catch(()=>{});
-    } else {
-      planMsg(L('Server said: ','服务器返回：','伺服器回傳：') + ((row && row.msg) || 'unknown'), true);
+      return;
     }
-  }catch(e){ planMsg(L('Failed: ','操作失败：','操作失敗：') + ((e && e.message) || ''), true); }
+    if(row && row.msg) firstErr = row.msg;
+  }catch(e){ firstErr = e; }
+  // 兜底：直接改 profiles 行（管理员策略允许）
+  try{
+    await patchPlan(uid, { plan_key:'free', plan_scope:'all', plan_until:null });
+    planMsg(L('Membership revoked.','已撤销该账号的会员。','已撤銷該帳號的會員。'), false);
+    await memLoad();
+    if(SUPSESS && SUPSESS.uid === uid) await memberLoad().catch(()=>{});
+  }catch(e2){
+    planMsg(L('Revoke failed: ','撤销失败：','撤銷失敗：') + planErrText(e2) + (firstErr ? ' (' + planErrText(firstErr) + ')' : ''), true);
+  }
 }
 async function planGrant(uid, days){
   let t = null;
@@ -1827,10 +1853,27 @@ async function planGrant(uid, days){
       planMsg(L('Granted ' + days + ' days of membership.','已发放 ' + days + ' 天会员。','已發放 ' + days + ' 天會員。'), false);
       await memLoad();
       if(SUPSESS && SUPSESS.uid === uid) await memberLoad().catch(()=>{});
-    } else {
-      planMsg(L('Server said: ','服务器返回：','伺服器回傳：') + ((row && row.msg) || 'unknown'), true);
+      return;
     }
-  }catch(e){ planMsg(L('Failed: ','操作失败：','操作失敗：') + ((e && e.message) || ''), true); }
+    const reason = (row && row.msg) || 'unknown';
+    if(/不存在|missing|does not exist|PGRST/i.test(reason)){
+      await patchPlan(uid, { plan_key:'pro', plan_scope:'all',
+        plan_until: new Date(Date.now() + days*86400000).toISOString() });
+      planMsg(L('Granted ' + days + ' days of membership.','已发放 ' + days + ' 天会员。','已發放 ' + days + ' 天會員。'), false);
+      await memLoad();
+      return;
+    }
+    planMsg(L('Server said: ','服务器返回：','伺服器回傳：') + reason, true);
+  }catch(e){
+    try{
+      await patchPlan(uid, { plan_key:'pro', plan_scope:'all',
+        plan_until: new Date(Date.now() + days*86400000).toISOString() });
+      planMsg(L('Granted ' + days + ' days of membership.','已发放 ' + days + ' 天会员。','已發放 ' + days + ' 天會員。'), false);
+      await memLoad();
+    }catch(e2){
+      planMsg(L('Failed: ','操作失败：','操作失敗：') + planErrText(e2) + ' (' + planErrText(e) + ')', true);
+    }
+  }
 }
 async function membersModal(open){
   let mask = $('memMask');
