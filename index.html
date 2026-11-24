@@ -10729,6 +10729,34 @@ async function exportPDF(answersOnly){
     const maxPW = scrubs.reduce((a,r)=> Math.max(a, r.pw), 1);
     const f = iw / maxPW;                    /* 统一比例尺：最宽的一张正好占满正文宽 */
 
+    const sizeOf = (raw) => {
+      let w = raw.pw * f, h = raw.ph * f;
+      if(w > iw){ const sc = iw / w; w *= sc; h *= sc; }
+      return { w, h };
+    };
+    /* 一个小问 = 一个不可分割的块：整块放不下就整块推到下一页，绝不在分页处切成两半。
+       只有「整块比一整页还高」时才退化成切片（并标注 continued），否则一律整块排。 */
+    const GAPPT = 4;
+    const drawQUnit = async (parts, metaHeight, drawMeta) => {
+      const limit = PH - my - 6, cap = limit - my;
+      const sizes = parts.map(p => sizeOf(p));
+      const imgH = sizes.reduce((a,s)=> a + s.h, 0) + GAPPT * Math.max(0, sizes.length - 1);
+      const need = imgH + (metaHeight || 0);
+      if(y > my + 24 && (need > cap || y + need > limit)) newPage();
+      let sc = 1;
+      const avail = limit - y - (metaHeight || 0);
+      if(imgH > Math.max(avail, 1)) sc = Math.max(avail, 1) / imgH;
+      if(!isFinite(sc) || sc <= 0.05) return false;   /* 极端异常才切片，正常一律整体缩放，绝不跨页 */
+      if(drawMeta) drawMeta();
+      sizes.forEach((sz, i)=>{
+        pdf.addImage(parts[i].data, 'JPEG', mx, y, sz.w * sc, sz.h * sc);
+        y += sz.h * sc;
+        if(i < sizes.length - 1) y += GAPPT * sc;
+      });
+      dirty = true;
+      return true;
+    };
+
     for(let k = 0; k < items.length; k++){
       const q = items[k].q, marks = items[k].marks;
       const startPage = pdf.getNumberOfPages();
@@ -10740,11 +10768,6 @@ async function exportPDF(answersOnly){
       /* 出处行高度（按实际换行算），保证「出处 + 截图」判定换页时用的是真实高度 */
       const metaH = (txt, size, lh) => pdf.splitTextToSize(clean(txt), cw).length * Math.max(lh, size * 0.5) + 1.2;
       const limit = PH - my - 6;
-      const sizeOf = (raw) => {
-        let w = raw.pw * f, h = raw.ph * f;
-        if(w > iw){ const sc = iw / w; w *= sc; h *= sc; }
-        return { w, h };
-      };
       /* 只有整块（出处 + 题目）都放不下才换页；换页后按剩余高度等比缩小，绝不把出处行单独留在上一页 */
       /* 超长图（答案册常见）按页高切片，保持原始比例尺，不把整张缩成一条 */
       const drawSliced = async (raw, label) => {
@@ -10802,23 +10825,14 @@ async function exportPDF(answersOnly){
           continue;
         }
         /* 第一块与出处行同页；超长单图切片分页，其余分块各自换页续排 */
-        if(parts.length === 1){
-          /* 出处行不能单独留在上一页：剩余空间太小就整块换页 */
-          if(limit - y < 65) newPage();
+        /* 答案册同一题的所有图片视为一个整块：放不下就整块换页，不把一个小问的答案切成两页 */
+        const okAns = await drawQUnit(parts, metaH(metaText, 11, 5.8),
+          ()=>put(metaText, 11, 'bold', [40, 45, 55], 5.8));
+        if(!okAns){
           put(metaText, 11, 'bold', [40, 45, 55], 5.8);
-          pageHasQ = true;
-          await drawSliced(parts[0], String(k + 1));
-        }else{
-          placeBlock(parts[0], metaH(metaText, 11, 5.8), metaText, 11, 5.8, [40, 45, 55]);
+          for(const pt of parts) await drawSliced(pt, String(k + 1));
         }
-        for(let j = 1; j < parts.length; j++){
-          let { w, h } = sizeOf(parts[j]);
-          if(y + h > limit) newPage();
-          const avail = limit - y;
-          if(h > avail){ const sc = avail / h; w *= sc; h *= sc; }
-          pdf.addImage(parts[j].data, 'JPEG', mx, y, w, h); dirty = true;
-          y += h;
-        }
+        pageHasQ = true;
         y += 7;
         continue;
       }
@@ -10826,8 +10840,12 @@ async function exportPDF(answersOnly){
       const parts = (rawList[k] || []).filter(Boolean);
       if(parts.length && (((state.subject === 'phys' || state.subject === 'fmath') && state.paper !== 'p1') || state.subject === 'math')){
         if(pageHasQ) newPage();
-        put(metaText, 11, 'bold', [110, 115, 125], 6);
-        for(const pt of parts){ await drawSliced(pt, null); }
+        const okQ = await drawQUnit(parts, metaH(metaText, 11, 6),
+          ()=>put(metaText, 11, 'bold', [110, 115, 125], 6));
+        if(!okQ){
+          put(metaText, 11, 'bold', [110, 115, 125], 6);
+          for(const pt of parts){ await drawSliced(pt, null); }
+        }
         dirty = true; pageHasQ = true; y += 7;
         continue;
       }
@@ -10845,15 +10863,11 @@ async function exportPDF(answersOnly){
         continue;
       }
       if(parts.length){
-        placeBlock(parts[0], metaH(metaText, 11, 6), metaText, 11, 6, [110, 115, 125]);
-        /* 跨页续文：后续分块换页续排，保持左对齐、字号不缩 */
-        for(let j = 1; j < parts.length; j++){
-          let { w, h } = sizeOf(parts[j]);
-          if(y + h > limit) newPage();
-          const avail = limit - y;
-          if(h > avail){ const sc = Math.max(avail, 1) / h; w *= sc; h *= sc; }
-          pdf.addImage(parts[j].data, 'JPEG', mx, y, w, h); dirty = true;
-          y += h;
+        const okG = await drawQUnit(parts, metaH(metaText, 11, 6),
+          ()=>put(metaText, 11, 'bold', [110, 115, 125], 6));
+        if(!okG){
+          put(metaText, 11, 'bold', [110, 115, 125], 6);
+          for(const pt of parts) await drawSliced(pt, String(k + 1));
         }
         y += 7;
       }else{
