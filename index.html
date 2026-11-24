@@ -1840,6 +1840,17 @@ async function planRevoke(uid){
     planMsg(L('Revoke failed: ','撤销失败：','撤銷失敗：') + planErrText(e2) + (firstErr ? ' (' + planErrText(firstErr) + ')' : ''), true);
   }
 }
+async function grantViaPatch(uid, days, why){
+  try{
+    await patchPlan(uid, { plan_key:'pro', plan_scope:'all',
+      plan_until: new Date(Date.now() + days*86400000).toISOString() });
+    planMsg(L('Granted ' + days + ' days of membership.','已发放 ' + days + ' 天会员。','已發放 ' + days + ' 天會員。'), false);
+    await memLoad();
+    if(SUPSESS && SUPSESS.uid === uid) await memberLoad().catch(()=>{});
+  }catch(e2){
+    planMsg(L('Failed: ','操作失败：','操作失敗：') + planErrText(e2) + (why ? ' (' + why + ')' : ''), true);
+  }
+}
 async function planGrant(uid, days){
   let t = null;
   try{ t = await cloudToken(); }catch(e){}
@@ -1855,24 +1866,14 @@ async function planGrant(uid, days){
       if(SUPSESS && SUPSESS.uid === uid) await memberLoad().catch(()=>{});
       return;
     }
-    const reason = (row && row.msg) || 'unknown';
-    if(/不存在|missing|does not exist|PGRST/i.test(reason)){
-      await patchPlan(uid, { plan_key:'pro', plan_scope:'all',
-        plan_until: new Date(Date.now() + days*86400000).toISOString() });
-      planMsg(L('Granted ' + days + ' days of membership.','已发放 ' + days + ' 天会员。','已發放 ' + days + ' 天會員。'), false);
-      await memLoad();
+    const reason = String((row && row.msg) || 'unknown');
+    if(/会员期|账号不存在|仅管理员/.test(reason)){
+      planMsg(L('Server said: ','服务器返回：','伺服器回傳：') + reason, true);
       return;
     }
-    planMsg(L('Server said: ','服务器返回：','伺服器回傳：') + reason, true);
+    await grantViaPatch(uid, days, reason);
   }catch(e){
-    try{
-      await patchPlan(uid, { plan_key:'pro', plan_scope:'all',
-        plan_until: new Date(Date.now() + days*86400000).toISOString() });
-      planMsg(L('Granted ' + days + ' days of membership.','已发放 ' + days + ' 天会员。','已發放 ' + days + ' 天會員。'), false);
-      await memLoad();
-    }catch(e2){
-      planMsg(L('Failed: ','操作失败：','操作失敗：') + planErrText(e2) + ' (' + planErrText(e) + ')', true);
-    }
+    await grantViaPatch(uid, days, planErrText(e));
   }
 }
 async function membersModal(open){
