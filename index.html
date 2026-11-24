@@ -237,12 +237,6 @@ html[data-mode="dark"] .star.on{color:#f7c33b}
 .hubcard .hc-tags span{font-size:11.5px;color:var(--sub);border:1px solid var(--line);border-radius:999px;padding:3px 9px;background:var(--bg)}
 .hubcard .hc-meta{color:var(--muted);font-size:12.5px;margin-top:auto}
 .hubcard .hc-go{position:absolute;right:24px;bottom:22px;font-size:13px;font-weight:600;color:var(--accent)}
-.hub-admin{margin-top:18px}
-.hubcard.adm{min-height:0;padding:20px 24px 18px;border-left:4px solid #b7791f}
-.hubcard.adm .hc-badge{width:34px;height:34px;border-radius:10px;font-size:12px}
-.hubcard.adm h2{font-size:19px}
-.hubcard.adm p{margin-bottom:12px}
-.hubcard.adm .hc-go{bottom:18px}
 .hub-note{margin-top:22px;font-size:12.5px;color:var(--muted);line-height:1.6}
 
 /* ===== Notes 笔记 ===== */
@@ -1798,6 +1792,28 @@ function planChip(r){
   const live = d > new Date();
   return '<span class="chip ' + (live ? 'ok' : '') + '">' + (live ? 'Pro · ' : 'Expired · ') + d.toLocaleDateString() + '</span>';
 }
+function planMsg(txt, bad){
+  const el = document.getElementById('admMemMsg');
+  if(el){ el.textContent = txt; el.style.color = bad ? '#c0392b' : 'var(--muted)'; }
+  if(txt) toast(txt);
+}
+async function planRevoke(uid){
+  let t = null;
+  try{ t = await cloudToken(); }catch(e){}
+  if(!t) return planMsg(L('Sign in first.','请先登录。','請先登入。'), true);
+  try{ await roleCheck(true); }catch(e){}
+  try{
+    const r = await supaCall('/rest/v1/rpc/admin_revoke_plan', { method:'POST', token:t, body:{ p_uid: uid } });
+    const row = Array.isArray(r) ? r[0] : r;
+    if(row && row.ok){
+      planMsg(L('Membership revoked.','已撤销该账号的会员。','已撤銷該帳號的會員。'), false);
+      await memLoad();
+      if(SUPSESS && SUPSESS.uid === uid) await memberLoad().catch(()=>{});
+    } else {
+      planMsg(L('Server said: ','服务器返回：','伺服器回傳：') + ((row && row.msg) || 'unknown'), true);
+    }
+  }catch(e){ planMsg(L('Failed: ','操作失败：','操作失敗：') + ((e && e.message) || ''), true); }
+}
 async function planGrant(uid, days){
   let t = null;
   try{ t = await cloudToken(); }catch(e){}
@@ -1808,12 +1824,13 @@ async function planGrant(uid, days){
     const r = await supaCall('/rest/v1/rpc/admin_set_plan', { method:'POST', token:t, body:{ p_uid: uid, p_days: days } });
     const row = Array.isArray(r) ? r[0] : r;
     if(row && row.ok){
-      toast(days > 0 ? L('Granted ' + days + ' days of membership.','已发放 ' + days + ' 天会员。','已發放 ' + days + ' 天會員。')
-                     : L('Membership revoked.','已撤销该账号的会员。','已撤銷該帳號的會員。'));
-      if(document.getElementById('admMem')) await memLoad(); else await membersModal(true);
+      planMsg(L('Granted ' + days + ' days of membership.','已发放 ' + days + ' 天会员。','已發放 ' + days + ' 天會員。'), false);
+      await memLoad();
       if(SUPSESS && SUPSESS.uid === uid) await memberLoad().catch(()=>{});
-    } else toast((row && row.msg) || L('Failed.','操作失败。','操作失敗。'));
-  }catch(e){ toast(L('Failed: ','操作失败：','操作失敗：') + ((e && e.message) || '')); }
+    } else {
+      planMsg(L('Server said: ','服务器返回：','伺服器回傳：') + ((row && row.msg) || 'unknown'), true);
+    }
+  }catch(e){ planMsg(L('Failed: ','操作失败：','操作失敗：') + ((e && e.message) || ''), true); }
 }
 async function membersModal(open){
   let mask = $('memMask');
@@ -9959,7 +9976,8 @@ function renderAdmin(){
           <button class="btn ghost sm" data-act="roleCheck">${L('Check my role','校验我的身份','校驗我的身分')}</button>
           <button class="btn ghost sm" data-act="memRefresh">${L('Refresh','刷新','刷新')}</button>
         </div></div>
-      <div class="cb" id="admMem"><div class="pmeta">${L('Reading the cloud account list…','正在读取云端账号列表…','正在讀取雲端帳號列表…')}</div></div>
+      <div class="cb" id="admMem"><div class="pmeta">${L('Reading the cloud account list…','正在读取云端账号列表…','正在讀取雲端帳號列表…')}</div>
+        <div class="pmeta" id="admMemMsg" style="margin-top:8px;min-height:16px"></div></div>
     </div>` : ''}
     <div class="card" style="margin-top:16px">
       <div class="ch"><h3>${L('Watermark','水印','水印')} <span class="hint">${L('shown on the site and in every exported PDF','显示在站点上和每一份导出的 PDF 上','顯示在站點上和每一份匯出的 PDF 上')}</span></h3></div>
@@ -10086,9 +10104,11 @@ async function memLoad(){
               ${[['student',L('Student','学生','學生')],['admin',L('Admin','管理员','管理員')],['deputy',L('Deputy admin','副管理员','副管理員')]]
                 .map(([v,lab])=>`<option value="${v}" ${r.role===v?'selected':''}>${lab}</option>`).join('')}
             </select>`}
-        <button class="btn ghost sm" data-act="planGrant" data-uid="${r.id}" data-days="30">+30 ${L('days','天','天')}</button>
-        <button class="btn ghost sm" data-act="planGrant" data-uid="${r.id}" data-days="365">+365 ${L('days','天','天')}</button>
-        <button class="btn ghost sm" data-act="planGrant" data-uid="${r.id}" data-days="0">${L('Revoke','撤销','撤銷')}</button>
+        ${(()=>{ const live = !!(r.plan_until && new Date(r.plan_until) > new Date());
+          const off = 'disabled style="opacity:.45;cursor:not-allowed"';
+          return `<button class="btn ghost sm" data-act="planGrant" data-uid="${r.id}" data-days="30" ${live?off:''}>+30 ${L('days','天','天')}</button>
+        <button class="btn ghost sm" data-act="planGrant" data-uid="${r.id}" data-days="365" ${live?off:''}>+365 ${L('days','天','天')}</button>
+        <button class="btn ghost sm" data-act="planRevoke" data-uid="${r.id}" ${live?'':off}>${L('Revoke','撤销','撤銷')}</button>`; })()}
       </div>
     </div>`).join('') || `<div class="pmeta">${L('No cloud accounts yet.','云端还没有账号。','雲端還沒有帳號。')}</div>`;
 }
@@ -10930,8 +10950,12 @@ document.addEventListener('click', (e)=>{
   if(act === 'roleCheck'){ roleCheck(false); return; }
   if(act === 'memClose'){ membersModal(false); return; }
   if(act === 'planGrant'){
-    if(!isAdmin()){ toast('Administrator only.'); return; }
+    if(!isAdmin()){ planMsg(L('This account is not an administrator in the cloud.','这个账号在云端不是管理员。','這個帳號在雲端不是管理員。'), true); return; }
     planGrant(el.dataset.uid, Number(el.dataset.days || 0)); return;
+  }
+  if(act === 'planRevoke'){
+    if(!isAdmin()){ planMsg(L('This account is not an administrator in the cloud.','这个账号在云端不是管理员。','這個帳號在雲端不是管理員。'), true); return; }
+    planRevoke(el.dataset.uid); return;
   }
   if(act === 'cloudSignup'){ cloudSignup(); return; }
   if(act === 'cloudSignin'){ cloudSignin(); return; }
@@ -11700,20 +11724,6 @@ function renderHub(){
           <span class="hc-go">Open →</span>
         </button>
       </div>
-      ${isAdmin() ? `
-      <div class="hub-admin">
-        <button class="hubcard adm" data-act="admin">
-          <div class="hc-top">
-            <span class="hc-badge" style="background:#b7791f">AD</span>
-            <h2>${L('Admin console','管理后台','管理後台')}</h2>
-          </div>
-          <p>${isOwner()
-            ? L('Accounts and plans, roles, feedback, watermark and question bank.','账号与会员、角色分配、反馈、水印、题库管理。','帳號與會員、角色分配、回饋、水印、題庫管理。')
-            : L('Feedback, watermark and question bank.','处理反馈、修改水印、管理题库。','處理回饋、修改水印、管理題庫。')}</p>
-          <div class="hc-tags"><span class="roleTag">${isOwner() ? L('Primary admin','主管理员','主管理員') : L('Admin','管理员','管理員')}</span><span>${L('cloud role','云端身份','雲端身分')}</span></div>
-          <span class="hc-go">${L('Open','打开','開啟')} →</span>
-        </button>
-      </div>` : ''}
       <div class="hub-note">Everything lives in your browser — papers, favourites and lists.</div>
     </div>`;
   if(typeof applyLang === 'function') applyLang();
