@@ -237,6 +237,12 @@ html[data-mode="dark"] .star.on{color:#f7c33b}
 .hubcard .hc-tags span{font-size:11.5px;color:var(--sub);border:1px solid var(--line);border-radius:999px;padding:3px 9px;background:var(--bg)}
 .hubcard .hc-meta{color:var(--muted);font-size:12.5px;margin-top:auto}
 .hubcard .hc-go{position:absolute;right:24px;bottom:22px;font-size:13px;font-weight:600;color:var(--accent)}
+.hub-admin{margin-top:18px}
+.hubcard.adm{min-height:0;padding:20px 24px 18px;border-left:4px solid #b7791f}
+.hubcard.adm .hc-badge{width:34px;height:34px;border-radius:10px;font-size:12px}
+.hubcard.adm h2{font-size:19px}
+.hubcard.adm p{margin-bottom:12px}
+.hubcard.adm .hc-go{bottom:18px}
 .hub-note{margin-top:22px;font-size:12.5px;color:var(--muted);line-height:1.6}
 
 /* ===== Notes 笔记 ===== */
@@ -1553,6 +1559,8 @@ async function memberLoad(){
   }catch(e){ MEMBER.active=false; }
   payBtnSync();
   try{ if(typeof renderSubject==='function') renderSubject(); }catch(e){}
+  try{ renderUserChip(); }catch(e){}
+  try{ if(state.view === 'hub') renderHub(); }catch(e){}
 }
 const __SEASON_DEFS = [
   { key:'FM', label:'F/M', y:'', md:[3,31] },
@@ -1793,7 +1801,9 @@ function planChip(r){
 async function planGrant(uid, days){
   let t = null;
   try{ t = await cloudToken(); }catch(e){}
-  if(!t) return toast('请先登录管理员账号');
+  if(!t) return toast(L('Sign in first.','请先登录。','請先登入。'));
+  // 服务端才是最终裁判：先把云端角色同步下来，避免前端身份过期导致点了没反应
+  try{ await roleCheck(true); }catch(e){}
   try{
     const r = await supaCall('/rest/v1/rpc/admin_set_plan', { method:'POST', token:t, body:{ p_uid: uid, p_days: days } });
     const row = Array.isArray(r) ? r[0] : r;
@@ -1801,8 +1811,9 @@ async function planGrant(uid, days){
       toast(days > 0 ? L('Granted ' + days + ' days of membership.','已发放 ' + days + ' 天会员。','已發放 ' + days + ' 天會員。')
                      : L('Membership revoked.','已撤销该账号的会员。','已撤銷該帳號的會員。'));
       if(document.getElementById('admMem')) await memLoad(); else await membersModal(true);
-    } else toast((row && row.msg) || '操作失败');
-  }catch(e){ toast('操作失败：' + ((e && e.message) || '网络错误')); }
+      if(SUPSESS && SUPSESS.uid === uid) await memberLoad().catch(()=>{});
+    } else toast((row && row.msg) || L('Failed.','操作失败。','操作失敗。'));
+  }catch(e){ toast(L('Failed: ','操作失败：','操作失敗：') + ((e && e.message) || '')); }
 }
 async function membersModal(open){
   let mask = $('memMask');
@@ -9930,9 +9941,10 @@ function renderAdmin(){
   if(!v){ v = document.createElement('section'); v.id = 'vAdmin'; document.querySelector('main.wrap').appendChild(v); }
   v.classList.remove('hidden');
   v.innerHTML = `
-    <div class="hero"><h1>${L('Admin console','管理后台','管理後台')}</h1><p>${L('view','视图','檢視')} · ${L('only the primary administrator can delete accounts; every other admin action is queued for approval.',
-      '只有主管理员可以删除账号；其他管理员的操作会进入审批队列。',
-      '只有主管理員可以刪除帳號；其他管理員的操作會進入審批隊列。')}</p></div>
+    <div class="hero"><h1>${L('Admin console','管理后台','管理後台')} <span class="roleTag">${isOwner() ? L('Primary admin','主管理员','主管理員') : L('Admin','管理员','管理員')}</span></h1>
+      <p>${isOwner()
+        ? L('You are the primary administrator: every admin action plus account roles, plans and deletions.','你是主管理员：拥有全部管理员权限，另外还能管理账号角色、会员和删除账号。','你是主管理員：擁有全部管理員權限，另外還能管理帳號角色、會員和刪除帳號。')
+        : L('You are an administrator: feedback, watermark and question bank. Account roles and plans stay with the primary administrator.','你是管理员：可以处理反馈、修改水印、管理题库。账号角色和会员由主管理员负责。','你是管理員：可以處理回饋、修改水印、管理題庫。帳號角色和會員由主管理員負責。')}</p></div>
     <div class="card" style="margin-top:16px">
       <div class="ch"><h3>${L('Feedback','反馈','回饋')} <span class="hint">${FEEDBACK.length} ${L('total','总计','總計')} · ${fbOpenCount()} ${L('open','待处理','待處理')}</span></h3>
         <button class="btn ghost sm" data-act="fbBoard">${L('Open board','打开反馈板','開啟回饋板')}</button></div>
@@ -9943,11 +9955,14 @@ function renderAdmin(){
     </div>
     ${isOwner() ? `<div class="card" style="margin-top:16px">
       <div class="ch"><h3>${L('Accounts and plans','账号与会员','帳號與會員')} <span class="hint" id="admMemHint">${L('loading…','加载中…','載入中…')}</span></h3>
-        <button class="btn ghost sm" data-act="memRefresh">${L('Refresh','刷新','刷新')}</button></div>
+        <div class="row" style="gap:8px">
+          <button class="btn ghost sm" data-act="roleCheck">${L('Check my role','校验我的身份','校驗我的身分')}</button>
+          <button class="btn ghost sm" data-act="memRefresh">${L('Refresh','刷新','刷新')}</button>
+        </div></div>
       <div class="cb" id="admMem"><div class="pmeta">${L('Reading the cloud account list…','正在读取云端账号列表…','正在讀取雲端帳號列表…')}</div></div>
-    </div>
+    </div>` : ''}
     <div class="card" style="margin-top:16px">
-      <div class="ch"><h3>Watermark <span class="hint">shown on the site and in every exported PDF</span></h3></div>
+      <div class="ch"><h3>${L('Watermark','水印','水印')} <span class="hint">${L('shown on the site and in every exported PDF','显示在站点上和每一份导出的 PDF 上','顯示在站點上和每一份匯出的 PDF 上')}</span></h3></div>
       <div class="cb">
         <div class="row" style="gap:16px;flex-wrap:wrap;margin-bottom:10px">
           <label class="hint"><input type="checkbox" id="wmOn" ${WM.on?'checked':''}> Master switch</label>
@@ -9982,9 +9997,9 @@ function renderAdmin(){
           <button class="btn primary sm" data-act="wmSave">Save watermark</button>
           <button class="btn ghost sm" data-act="wmReset">Restore default</button>
         </div>
-        <div class="hint" style="margin-top:10px;line-height:1.7">Only the primary administrator can edit this. The setting is stored on this device and applies to the site overlay and to every PDF exported from it.</div>
+        <div class="hint" style="margin-top:10px;line-height:1.7">${L('Any administrator can edit this. Saved on this device; applies to the site overlay and to every PDF exported from it.','任何管理员都能改。设置保存在本设备，作用于站点水印和本设备导出的 PDF。','任何管理員都能改。設定保存在本裝置，作用於站點水印和本裝置匯出的 PDF。')}</div>
       </div>
-    </div>` : ''}
+    </div>
     <div class="card" style="margin-top:16px">
       <div class="ch"><h3>Question bank</h3></div>
       <div class="cb">
@@ -10011,6 +10026,30 @@ async function setRole(uid, role){
     toast(L('Failed: ','操作失败：','操作失敗：') + ((e && e.message) || ''));
   }
   memLoad();
+}
+async function roleCheck(silent){
+  let t = null;
+  try{ t = await cloudToken(); }catch(e){}
+  if(!t) return null;
+  let srv = null;
+  try{
+    let r = await supaCall('/rest/v1/rpc/my_role', { method:'POST', token:t, body:{} });
+    if(Array.isArray(r)) r = r[0];
+    if(typeof r === 'string'){
+      try{ const p2 = JSON.parse(r); if(typeof p2 === 'string') r = p2; }catch(e){}
+      srv = r.toLowerCase();
+    } else if(r && typeof r === 'object'){ srv = String(r.my_role || r.role || '').toLowerCase(); }
+  }catch(e){ if(!silent) toast(L('Role check failed: ','身份校验失败：','身分校驗失敗：') + ((e && e.message) || '')); return null; }
+  if(!['owner','deputy','admin','student'].includes(srv)) return null;
+  const s = window.SUPSESS_LIVE && window.SUPSESS_LIVE();
+  if(s && s.role !== srv){
+    s.role = srv; ss(K_SUPA, s);
+    if(USERS[state.user]){ USERS[state.user].role = srv; ss(K_USERS, USERS); }
+    try{ renderUserChip(); }catch(e){}
+    try{ if(vAdminOpen()) renderAdmin(); }catch(e){}
+    if(!silent) toast(L('Role synced from the cloud: ','已从云端同步身份：','已從雲端同步身分：') + srv);
+  }
+  return srv;
 }
 async function memLoad(){
   const box = document.getElementById('admMem');
@@ -10888,6 +10927,7 @@ document.addEventListener('click', (e)=>{
   if(act === 'accSave'){ accountSave(); return; }
   if(act === 'members'){ membersModal(true); return; }
   if(act === 'memRefresh'){ memLoad(); return; }
+  if(act === 'roleCheck'){ roleCheck(false); return; }
   if(act === 'memClose'){ membersModal(false); return; }
   if(act === 'planGrant'){
     if(!isAdmin()){ toast('Administrator only.'); return; }
@@ -11660,9 +11700,24 @@ function renderHub(){
           <span class="hc-go">Open →</span>
         </button>
       </div>
+      ${isAdmin() ? `
+      <div class="hub-admin">
+        <button class="hubcard adm" data-act="admin">
+          <div class="hc-top">
+            <span class="hc-badge" style="background:#b7791f">AD</span>
+            <h2>${L('Admin console','管理后台','管理後台')}</h2>
+          </div>
+          <p>${isOwner()
+            ? L('Accounts and plans, roles, feedback, watermark and question bank.','账号与会员、角色分配、反馈、水印、题库管理。','帳號與會員、角色分配、回饋、水印、題庫管理。')
+            : L('Feedback, watermark and question bank.','处理反馈、修改水印、管理题库。','處理回饋、修改水印、管理題庫。')}</p>
+          <div class="hc-tags"><span class="roleTag">${isOwner() ? L('Primary admin','主管理员','主管理員') : L('Admin','管理员','管理員')}</span><span>${L('cloud role','云端身份','雲端身分')}</span></div>
+          <span class="hc-go">${L('Open','打开','開啟')} →</span>
+        </button>
+      </div>` : ''}
       <div class="hub-note">Everything lives in your browser — papers, favourites and lists.</div>
     </div>`;
   if(typeof applyLang === 'function') applyLang();
+  try{ renderUserChip(); }catch(e){}
   setTimeout(syncFx, 0);
 }
 
@@ -11709,6 +11764,9 @@ window.renderHub = renderHub;
 renderHub();
 applyLang();
 renderWM();
+try{ renderUserChip(); }catch(e){}
+try{ if(isAdmin()) roleCheck(true); }catch(e){}
+setTimeout(function(){ try{ roleCheck(true); }catch(e){} }, 1200);
 </script>
 </body>
 </html>
