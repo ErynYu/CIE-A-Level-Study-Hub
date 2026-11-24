@@ -1527,8 +1527,15 @@ async function memberLoad(){
   try{ t = await cloudToken(); s = (window.SUPSESS_LIVE && window.SUPSESS_LIVE()); }catch(e){}
   if(!t || !s){ MEMBER.active=false; MEMBER.key='free'; MEMBER.until=null; payBtnSync(); return; }
   try{
-    const r = await supaCall('/rest/v1/profiles?id=eq.'+encodeURIComponent(s.uid)+'&select=plan_key,plan_scope,plan_until', { method:'GET', token:t });
+    const r = await supaCall('/rest/v1/profiles?id=eq.'+encodeURIComponent(s.uid)+'&select=plan_key,plan_scope,plan_until,role', { method:'GET', token:t });
     const row = Array.isArray(r) ? r[0] : r;
+    const rk = String((row && row.role) || '').toLowerCase();
+    if(['owner','deputy','admin','student'].includes(rk) && s && s.role !== rk){
+      s.role = rk; ss(K_SUPA, s);
+      if(USERS[state.user]){ USERS[state.user].role = rk; ss(K_USERS, USERS); }
+      try{ renderUserChip(); }catch(e){}
+      try{ if(vAdminOpen()) renderAdmin(); }catch(e){}
+    }
     MEMBER.key   = (row && row.plan_key) || 'free';
     MEMBER.scope = (row && row.plan_scope) || 'all';
     MEMBER.until = (row && row.plan_until) || null;
@@ -1730,7 +1737,7 @@ async function profileUpsert(){
     method:'POST', token:t,
     headers:{ Prefer:'resolution=merge-duplicates,return=minimal' },
     body:{ id: SUPSESS.uid, email: SUPSESS.email, username: SUPSESS.name,
-      role: SUPSESS.role || 'student', updated_at: new Date().toISOString() }
+      updated_at: new Date().toISOString() }
   });
 }
 function accountModal(open){
@@ -8981,7 +8988,8 @@ const __FREE_SRC = {};
 function isAdminAcct(){
   try{
     const s = (window.SUPSESS_LIVE && window.SUPSESS_LIVE());
-    const r = ((s && s.role) || (USERS[state.user] && USERS[state.user].role) || '').toLowerCase();
+    if(s) return ['owner','admin','deputy'].includes(String(s.role || '').toLowerCase());
+    const r = ((USERS[state.user] && USERS[state.user].role) || '').toLowerCase();
     return r === 'owner' || r === 'admin' || r === 'deputy';
   }catch(e){ return false; }
 }
@@ -9057,9 +9065,10 @@ function renderUserChip(){
   if(signed){
     $('userName').textContent = displayName();
     $('avatar').textContent = displayName().slice(0,1).toUpperCase();
-    const r = (USERS[state.user] || {}).role;
+    const r = cloudRoleNow() || (USERS[state.user] || {}).role;
     $('roleTag').textContent = ROLE_LABEL[r] || 'Student';
     $('roleTag').classList.toggle('hidden', !r);
+    $('roleTag').classList.toggle('owner', r === 'owner');
   }
   $('adminBtn').classList.toggle('hidden', !isAdmin());
   $('paperCount').textContent = udata().papers.length ? '(' + udata().papers.length + ')' : '';
@@ -9172,6 +9181,11 @@ async function doSignup(){
   authModal(false); renderUserChip(); renderHome();
   toast('Account created — signed in as ' + raw);
   await cloudAfterAuth().catch(()=>{});
+  try{
+    await supaCall('/rest/v1/profiles?id=eq.' + encodeURIComponent(SUPSESS.uid), {
+      method:'PATCH', token: await cloudToken(),
+      headers:{ Prefer:'return=minimal' }, body:{ role: role } });
+  }catch(e){}
   await memberLoad().catch(()=>{});
 }
 function signout(){
@@ -9899,6 +9913,7 @@ function settingsModal(open){
     hex.addEventListener('change', e=>sync(e.target.value.trim()));
   }
 }
+function vAdminOpen(){ const v = document.getElementById('vAdmin'); return !!v && !v.classList.contains('hidden'); }
 function renderAdmin(){
   if(window.topFor) window.topFor('builder');
   if(!isAdmin()){
@@ -9914,66 +9929,10 @@ function renderAdmin(){
   let v = $('vAdmin');
   if(!v){ v = document.createElement('section'); v.id = 'vAdmin'; document.querySelector('main.wrap').appendChild(v); }
   v.classList.remove('hidden');
-  const names = Object.keys(USERS).sort((a,b)=>(USERS[a].created||0)-(USERS[b].created||0));
-  const dt = t => t ? new Date(t).toLocaleString([], {dateStyle:'medium', timeStyle:'short'}) : '—';
-  const rows = names.map((n, i)=>{
-    const u = USERS[n];
-    const papers = (USERDATA[n] && USERDATA[n].papers ? USERDATA[n].papers.length : 0);
-    const drafts = (USERDATA[n] && USERDATA[n].drafts ? Object.keys(USERDATA[n].drafts).length : 0);
-    return `<div class="arow">
-      <div class="anum">#${i+1}</div>
-      <div class="amain">
-        <div class="aname">${esc(u.name || n)} ${u.role === 'student'
-          ? '<span class="roleTag" style="background:#eef2f8;color:#475569;border-color:#dbe3ee">Student</span>'
-          : `<span class="roleTag">${ROLE_LABEL[u.role] || 'Admin'}</span>`}</div>
-        <div class="ameta">${esc(u.email || u.phone || n)} · ${u.logins || 0} ${L('sign-in(s) on this device','次登录（本设备）','次登入（本機）')} · ${papers} ${L('paper(s)','套试卷','套試卷')} · ${drafts} ${L('draft(s)','份草稿','份草稿')}</div>
-        <div class="ameta">${L('First seen','首次登录','首次登入')} ${dt(u.created)} · ${L('Last active','最近活跃','最近活躍')} ${dt(u.last || u.created)}</div>
-      </div>
-      <div class="acts">
-        <button class="btn ghost sm" data-act="editUser" data-u="${esc(n)}">${isOwner() ? L('Edit','编辑','編輯') : L('Request edit','申请修改','申請修改')}</button>
-        ${canDeleteAccounts()
-          ? `<button class="btn ghost sm" data-act="delUser" data-u="${esc(n)}">${L('Delete','删除','刪除')}</button>`
-          : `<button class="btn ghost sm" data-act="requestDelete" data-u="${esc(n)}">${L('Request delete','申请删除','申請刪除')}</button>`}
-      </div>
-    </div>`;
-  }).join('');
-  const pend = REQUESTS.filter(r=>r.status === 'pending');
-  const pendRows = isOwner() ? pend.map(r=>{
-    const kind = {edit:L('Role / profile edit','角色 / 资料修改','角色 / 資料修改'), delete:L('Delete account','删除账号','刪除帳號'), clearBank:L('Clear imported bank','清空导入题库','清空匯入題庫')}[r.kind] || r.kind;
-    const who = r.target ? ' → ' + esc(r.target) : '';
-    const det = (r.kind === 'edit' && r.payload) ? ` · ${L('new role','新角色','新角色')}: ${esc(ROLE_LABEL[r.payload.role] || r.payload.role)}` : '';
-    return `<div class="arow">
-      <div class="anum">•</div>
-      <div class="amain">
-        <div class="aname">${kind}${who}</div>
-        <div class="ameta">${L('requested by','申请人','申請人')} ${esc(r.by)} · ${new Date(r.at).toLocaleString()}${det}</div>
-      </div>
-      <div class="acts">
-        <button class="btn sm primary" data-act="approveReq" data-rid="${r.id}">${L('Approve','通过','通過')}</button>
-        <button class="btn ghost sm" data-act="rejectReq" data-rid="${r.id}">${L('Reject','驳回','駁回')}</button>
-      </div>
-    </div>`;
-  }).join('') : '';
-  const pendCard = isOwner() ? `
-    <div class="card" style="margin-top:20px">
-      <div class="ch"><h3>${L('Approval queue','审批队列','審批隊列')} <span class="hint">${pend.length} ${L('pending','待处理','待處理')}</span></h3></div>
-      <div class="cb">${pendRows || `<div class="empty"><b>${L('Nothing waiting','暂无待办','暫無待辦')}</b>${L('Requests from the deputy and other admins appear here.','副管理员和其他管理员提交的申请会出现在这里。','副管理員和其他管理員提交的申請會出現在這裡。')}</div>`}</div>
-    </div>` : `
-    <div class="hint" style="margin-top:18px;padding:12px;border:1px dashed var(--line);border-radius:9px;line-height:1.7">
-      ${L('Your changes are submitted to the primary administrator for approval. Account deletion is reserved for the primary administrator.',
-            '你的操作会提交给主管理员审批。删除账号的权限只属于主管理员。',
-            '你的操作會提交給主管理員審批。刪除帳號的權限只屬於主管理員。')}
-    </div>`;
-
   v.innerHTML = `
     <div class="hero"><h1>${L('Admin console','管理后台','管理後台')}</h1><p>${L('view','视图','檢視')} · ${L('only the primary administrator can delete accounts; every other admin action is queued for approval.',
       '只有主管理员可以删除账号；其他管理员的操作会进入审批队列。',
       '只有主管理員可以刪除帳號；其他管理員的操作會進入審批隊列。')}</p></div>
-    ${pendCard}
-    <div class="card" style="margin-top:20px">
-      <div class="ch"><h3>${L('Accounts','账号','帳號')} <span class="hint">${names.length} ${L('total','总计','總計')} · ${names.filter(n=>USERS[n].role==='admin'||USERS[n].role==='deputy').length} ${L('admin','管理员','管理員')} · ${names.filter(n=>USERS[n].role==='owner').length} ${L('owner','主管理员','主管理員')}</span></h3></div>
-      <div class="cb">${rows || `<div class="empty"><b>${L('No accounts yet','还没有账号','還沒有帳號')}</b>${L('Register to create the first administrator.','注册即可创建第一个管理员账号。','註冊即可建立第一個管理員帳號。')}</div>`}</div>
-    </div>
     <div class="card" style="margin-top:16px">
       <div class="ch"><h3>${L('Feedback','反馈','回饋')} <span class="hint">${FEEDBACK.length} ${L('total','总计','總計')} · ${fbOpenCount()} ${L('open','待处理','待處理')}</span></h3>
         <button class="btn ghost sm" data-act="fbBoard">${L('Open board','打开反馈板','開啟回饋板')}</button></div>
@@ -9983,7 +9942,7 @@ function renderAdmin(){
       </div>
     </div>
     ${isOwner() ? `<div class="card" style="margin-top:16px">
-      <div class="ch"><h3>${L('Membership','会员管理','會員管理')} <span class="hint" id="admMemHint">${L('loading…','加载中…','載入中…')}</span></h3>
+      <div class="ch"><h3>${L('Accounts and plans','账号与会员','帳號與會員')} <span class="hint" id="admMemHint">${L('loading…','加载中…','載入中…')}</span></h3>
         <button class="btn ghost sm" data-act="memRefresh">${L('Refresh','刷新','刷新')}</button></div>
       <div class="cb" id="admMem"><div class="pmeta">${L('Reading the cloud account list…','正在读取云端账号列表…','正在讀取雲端帳號列表…')}</div></div>
     </div>
@@ -10039,6 +9998,20 @@ function renderAdmin(){
     </div>`;
   memLoad();
 }
+async function setRole(uid, role){
+  let t = null;
+  try{ t = await cloudToken(); }catch(e){}
+  if(!t){ toast(L('Sign in with the primary administrator account first.','请先用主管理员账号登录。','請先用主管理員帳號登入。')); return; }
+  try{
+    const r = await supaCall('/rest/v1/rpc/admin_set_role', { method:'POST', token:t, body:{ p_uid: uid, p_role: role } });
+    const row = Array.isArray(r) ? r[0] : r;
+    if(row && row.ok) toast(L('Role updated.','角色已更新。','角色已更新。'));
+    else toast((row && row.msg) || L('Failed.','操作失败。','操作失敗。'));
+  }catch(e){
+    toast(L('Failed: ','操作失败：','操作失敗：') + ((e && e.message) || ''));
+  }
+  memLoad();
+}
 async function memLoad(){
   const box = document.getElementById('admMem');
   if(!box) return;
@@ -10068,6 +10041,12 @@ async function memLoad(){
         <div class="pmeta" style="margin-top:3px">${planChip(r)}${r.created_at ? ' · ' + L('joined','注册','註冊') + ' ' + new Date(r.created_at).toLocaleDateString() : ''}</div>
       </div>
       <div class="acts" style="flex-wrap:wrap;justify-content:flex-end">
+        ${r.role === 'owner'
+          ? `<span class="roleTag">${L('Owner','主管理员','主管理員')}</span>`
+          : `<select class="inp" style="width:auto;margin:0;padding:4px 8px;font-size:12px" onchange="setRole('${r.id}', this.value)">
+              ${[['student',L('Student','学生','學生')],['admin',L('Admin','管理员','管理員')],['deputy',L('Deputy admin','副管理员','副管理員')]]
+                .map(([v,lab])=>`<option value="${v}" ${r.role===v?'selected':''}>${lab}</option>`).join('')}
+            </select>`}
         <button class="btn ghost sm" data-act="planGrant" data-uid="${r.id}" data-days="30">+30 ${L('days','天','天')}</button>
         <button class="btn ghost sm" data-act="planGrant" data-uid="${r.id}" data-days="365">+365 ${L('days','天','天')}</button>
         <button class="btn ghost sm" data-act="planGrant" data-uid="${r.id}" data-days="0">${L('Revoke','撤销','撤銷')}</button>
